@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project Specific
+images/
+*.zip
+*.pt
+app-tier/facenet_pytorch/data/
+app-tier/facenet_pytorch/models/__pycache__/
+app-tier/facenet_pytorch/tests/__pycache__/
