@@ -66,12 +66,16 @@ def process_single_message(message):
         local_image_path = os.path.join(LOCAL_IMAGE_DIR, filename)
         
         # Download image from S3
-        success = download_image_from_s3(filename, local_image_path)
+        success, should_retry = download_image_from_s3(filename, local_image_path)
         if not success:
-            print(f"Error: Failed to download {filename} from S3. Skipping request.")
-            # Delete failed message to avoid retry loop
-            sqs_client.delete_message(QueueUrl=req_queue_url, ReceiptHandle=receipt_handle)
-            return
+            if should_retry:
+                print(f"Transient error for {filename}. Letting visibility timeout expire to retry.")
+                # Do NOT delete message. SQS will make it visible again later.
+                return
+            else:
+                print(f"Permanent error for {filename}. Deleting message to prevent poison pill.")
+                sqs_client.delete_message(QueueUrl=req_queue_url, ReceiptHandle=receipt_handle)
+                return
             
         print(f"Downloaded image from S3: {local_image_path}")
         
@@ -155,21 +159,25 @@ if __name__ == "__main__":
 
 
 def download_image_from_s3(filename, local_path):
-    """Downloads an image from S3 only if it exists."""
+    """Downloads an image from S3. Returns (success, should_retry)."""
     try:
         # Check if the file exists in S3
-        s3_client.head_object(Bucket=S3_INPUT_BUCKET, Key=filename)
-
-        # If the file exists, proceed with the download
+        # Optimization: download_file checks existence internally usually, but explicit head_object is fine too.
+        # To save API calls, we can just try to download.
         s3_client.download_file(S3_INPUT_BUCKET, filename, local_path)
-        return True
+        return True, False
     except s3_client.exceptions.ClientError as e:
-        # If the error is a 404 (Not Found), log and return False
-        if e.response["Error"]["Code"] == "404":
-            print(f"Error: {filename} does not exist in S3.")
+        # If the error is a 404 (Not Found), it's permanent.
+        error_code = e.response["Error"]["Code"]
+        if error_code == "404" or error_code == "NoSuchKey":
+            print(f"Permanent Error: {filename} does not exist in S3.")
+            return False, False # Do not retry
         else:
-            print(f"Error downloading {filename} from S3: {e}")
-        return False
+            print(f"Transient Error downloading {filename} from S3: {e}")
+            return False, True # Retry (let visibility timeout expire)
+    except Exception as e:
+        print(f"Unknown Error downloading {filename}: {e}")
+        return False, True # Retry
 
 
 def execute_face_recognition(image_path):
