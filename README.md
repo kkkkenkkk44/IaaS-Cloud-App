@@ -8,9 +8,9 @@ The system consists of two main tiers:
 
 ### 1. Web Tier (`web-tier/`)
 - **Server (`server.py`)**: A Flask-based web server that handles incoming HTTP requests.
+    - **Stateless Architecture**: Uses **Redis** for state management, enabling horizontal scaling (e.g., multiple servers behind a Load Balancer).
     - **Streaming Uploads**: Streams large images directly to S3 to minimize memory usage.
     - **Async Processing**: Uses a thread pool (100 workers) to handle high concurrency.
-    - **State Management**: Tracks request status using SQS and S3.
 - **Controller (`controller.py`)**: An intelligent auto-scaler.
     - **Worker-Driven Scaling**: Only handles **Scale Up** logic.
     - **Scale Down**: Delegated to workers to prevent race conditions (workers stop themselves when idle).
@@ -20,22 +20,24 @@ The system consists of two main tiers:
     - **Batch Processing**: Fetches messages in batches of 10 from SQS.
     - **Multiprocessing**: Utilizes all available CPU cores for parallel processing.
     - **Smart Resizing**: Automatically resizes large images (to 1024x1024) before processing to save CPU/RAM.
+    - **Robust Error Handling**: Distinguishes between permanent errors (deleted immediately) and transient errors (retried via Visibility Timeout).
     - **Self-Termination**: Automatically shuts down the EC2 instance when the queue is empty to save costs.
 
 ## Workflow
 
 1.  **User** uploads an image to the Web Tier.
-2.  **Web Server** streams the image to S3 (Input Bucket) and pushes a task to SQS (Request Queue).
+2.  **Web Server** streams the image to S3 (Input Bucket) and sets status in **Redis**.
 3.  **Controller** detects the backlog and launches EC2 instances (App Tier).
 4.  **Backend Workers** pull tasks from SQS, download images from S3, and perform face recognition.
 5.  **Results** are saved to S3 (Output Bucket) and pushed to SQS (Response Queue).
-6.  **Web Server** retrieves the result and returns it to the user.
+6.  **Web Server** polls **Redis** for the result and returns it to the user.
 
 ## Setup & Usage
 
 ### Prerequisites
 - AWS Account with S3 Buckets and SQS Queues created.
 - Python 3.8+
+- **Redis Server** (Local or AWS ElastiCache)
 - EC2 Instances with appropriate IAM roles.
 
 ### Installation
@@ -48,11 +50,12 @@ The system consists of two main tiers:
 
 2.  Install dependencies:
     ```bash
-    pip install boto3 flask werkzeug pillow
+    pip install boto3 flask werkzeug pillow redis
     # Install PyTorch and Facenet (see app-tier/facenet_pytorch/README.md)
     ```
 
 ### Running the Web Tier
+Ensure Redis is running (`redis-server`).
 ```bash
 cd web-tier
 python3 server.py
@@ -69,5 +72,6 @@ python3 backend.py
 
 ## Optimizations
 - **High Throughput**: Capable of handling 1000 req/s with `c5.xlarge` instances and ALB.
+- **Stateless Web Tier**: Decoupled state using Redis allows for infinite horizontal scaling.
 - **Cost Efficient**: "Scale to Zero" architecture ensures you don't pay for idle resources.
-- **Robustness**: Handles large file uploads and prevents accidental worker termination.
+- **Robustness**: Handles large file uploads, network glitches, and prevents accidental worker termination.
